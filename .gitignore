@@ -223,5 +223,3 @@ __marimo__/
 install/
 log/
 
-# vcs import 로 받는 upstream 소스
-/src/openarm_can/
