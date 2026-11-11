@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# colcon
+install/
+log/
+
+# vcs import 로 받는 upstream 소스
+/src/openarm_can/
