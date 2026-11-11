@@ -12,6 +12,9 @@ OpenArm v1 실습 코드. Ubuntu 24.04 · ROS 2 Jazzy 기준.
 
 `src/openarm_can` 은 `enactic/openarm_can` 1.4.1 소스다. 자동 영점 도구(`setup/openarm-can-zero-position-calibration`)만
 위치값 wrap 안전장치를 넣고 기본 `--robot-version` 을 `v1` 로 바꿨다.
+`src/openarm_description` 은 `enactic/openarm_description` 에서 v1 URDF 와 mesh 만 남긴 것이고,
+`src/openarm_sim/mjcf` 는 `enactic/openarm_mujoco` 의 v1 양팔 MJCF 다.
+두 패키지 모두 gripper finger 를 실물과 같은 soft finger(fin ray)와 `arx5_mounter` 로 바꿨고, TCP 는 finger 끝에서 11 mm 안쪽이다.
 
 ```bash
 sudo apt install -y ros-dev-tools
@@ -30,10 +33,22 @@ colcon build --symlink-install
 
 | 스크립트 | 용도 |
 | --- | --- |
+| `scripts/sim.sh` | 양팔을 MuJoCo 에 띄우고 실물과 같은 컨트롤러를 올린다 |
 | `scripts/can_fd.sh` | CAN 인터페이스를 CAN FD(bitrate 1 Mbps, dbitrate 5 Mbps)로 올린다 |
 | `scripts/motor_check.sh` | 팔마다 모터 8개의 응답과 상태를 읽는다(토크는 켜지 않음) |
 | `scripts/zero_manual.sh` | 손으로 맞춘 지금 자세를 모터 8개의 영점으로 기록한다(토크는 켜지 않음) |
 | `scripts/zero_auto.sh` | 관절마다 하드스톱을 찾아 영점을 잡는다(모터가 스스로 움직임) |
+
+### MuJoCo 시뮬레이션
+
+```bash
+./scripts/sim.sh                                                # MoveIt 용 joint_trajectory_controller
+./scripts/sim.sh robot_controller:=forward_position_controller  # teleop 용 forward_position_controller
+```
+
+MuJoCo 창에 양팔이 뜨고 관절 이름·명령 인터페이스(position)는 실물과 같다.
+다른 터미널에서 `ros2 control list_controllers` 를 실행해 컨트롤러 5개(`joint_state_broadcaster`, 팔 2개, 그리퍼 2개)가 모두 `active` 이면 정상이다.
+`Could not enable FIFO RT scheduling policy` 경고는 실시간 스케줄링 권한이 없다는 뜻이라 시뮬에서는 무시해도 된다.
 
 ### CAN FD 설정
 

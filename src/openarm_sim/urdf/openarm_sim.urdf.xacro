@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!-- OpenArm v1 양팔 URDF 에 MuJoCo 하드웨어를 붙인다.
+     관절 이름과 명령 인터페이스(position)는 실물 bringup 의 ros2_control 블록과 같다. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="openarm">
+  <xacro:include filename="$(find openarm_description)/assets/robot/openarm_v1.0/urdf/openarm_v10.urdf.xacro"/>
+
+  <xacro:macro name="sim_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="openarm_mujoco" type="system">
+    <hardware>
+      <plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
+      <param name="mujoco_model">$(find openarm_sim)/mjcf/scene.xml</param>
+    </hardware>
+    <xacro:sim_joint name="openarm_left_joint1"/>
+    <xacro:sim_joint name="openarm_left_joint2"/>
+    <xacro:sim_joint name="openarm_left_joint3"/>
+    <xacro:sim_joint name="openarm_left_joint4"/>
+    <xacro:sim_joint name="openarm_left_joint5"/>
+    <xacro:sim_joint name="openarm_left_joint6"/>
+    <xacro:sim_joint name="openarm_left_joint7"/>
+    <xacro:sim_joint name="openarm_left_finger_joint1"/>
+    <xacro:sim_joint name="openarm_right_joint1"/>
+    <xacro:sim_joint name="openarm_right_joint2"/>
+    <xacro:sim_joint name="openarm_right_joint3"/>
+    <xacro:sim_joint name="openarm_right_joint4"/>
+    <xacro:sim_joint name="openarm_right_joint5"/>
+    <xacro:sim_joint name="openarm_right_joint6"/>
+    <xacro:sim_joint name="openarm_right_joint7"/>
+    <xacro:sim_joint name="openarm_right_finger_joint1"/>
+  </ros2_control>
+</robot>
