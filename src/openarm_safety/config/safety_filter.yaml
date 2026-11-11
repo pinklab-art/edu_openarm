@@ -1,0 +1,23 @@
+# 안전 필터 설정. 시뮬과 실물이 같은 값을 쓴다.
+safety_filter:
+  ros__parameters:
+    arms: [left, right]
+    rate_hz: 100.0              # 명령을 내보내는 주기 [Hz]
+    input_timeout: 0.3          # 입력이 이보다 오래 끊기면 명령을 멈춤 [s]
+    ramp_speed: 0.4             # 출발할 때 관절 속도 상한 [rad/s]
+    max_speed: 2.0              # 따라갈 때 관절 속도 상한 [rad/s]
+    follow_tolerance: 0.02      # 출발 ramp 를 끝내는 목표와의 거리 [rad]
+    gripper_range: [0.0, 0.044] # finger_joint1 범위 [m] (닫힘, 열림)
+    gripper_alpha: 0.25         # 그리퍼 low-pass 계수 (1 이면 거르지 않음)
+    gripper_deadband: 0.001     # 이보다 작게 움직이면 goal 을 새로 보내지 않음 [m]
+    gripper_period: 0.1         # goal 을 보내는 최소 간격 [s]
+    gripper_max_effort: 10.0    # GripperCommand max_effort, gripper_controller 의 max_effort 와 같은 값
+
+    # 관절 1~7 의 [하한, 상한] [deg]. URDF 한계보다 좁은, 실기에서 쓰던 teleop 범위다.
+    # 왼팔·오른팔은 joint2 가 좌우 대칭이라 부호가 반대다.
+    left:
+      joint_limits_deg: [-75.0, 75.0,  -90.0, 9.0,  -85.0, 85.0,  0.0, 135.0,
+                         -85.0, 85.0,  -40.0, 40.0,  -80.0, 80.0]
+    right:
+      joint_limits_deg: [-75.0, 75.0,  -9.0, 90.0,  -85.0, 85.0,  0.0, 135.0,
+                         -85.0, 85.0,  -40.0, 40.0,  -80.0, 80.0]
