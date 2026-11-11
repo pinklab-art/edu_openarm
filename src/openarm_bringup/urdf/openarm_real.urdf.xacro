@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<!-- OpenArm v1 양팔 URDF 에 실물 하드웨어(OpenArmHW)를 팔마다 하나씩 붙인다.
+     관절 이름과 명령 인터페이스(position)는 openarm_sim 의 MuJoCo 하드웨어와 같다. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="openarm">
+  <xacro:include filename="$(find openarm_description)/assets/robot/openarm_v1.0/urdf/openarm_v10.urdf.xacro"/>
+
+  <xacro:property name="hw" value="${xacro.load_yaml('$(find openarm_bringup)/config/hardware.yaml')}"/>
+  <xacro:property name="gains" value="${xacro.load_yaml('$(find openarm_description)/assets/robot/openarm_v1.0/config/arm/control_gains.yaml')}"/>
+
+  <xacro:macro name="real_joint" params="name">
+    <joint name="${name}">
+      <command_interface name="position"/>
+      <command_interface name="velocity"/>
+      <command_interface name="effort"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+      <state_interface name="effort"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- 팔 하나 = CAN 버스 하나 = 모터 8개(관절 7 + 그리퍼 1). -->
+  <xacro:macro name="real_arm" params="side">
+    <ros2_control name="openarm_${side}" type="system">
+      <hardware>
+        <plugin>openarm_hardware/OpenArmHW</plugin>
+        <param name="can_interface">${hw['can_interface'][side]}</param>
+        <param name="arm_prefix">${side}_</param>
+        <param name="hand">true</param>
+        <param name="can_fd">true</param>
+        <param name="kp1">${gains['joint1']['kp']}</param>
+        <param name="kp2">${gains['joint2']['kp']}</param>
+        <param name="kp3">${gains['joint3']['kp']}</param>
+        <param name="kp4">${gains['joint4']['kp']}</param>
+        <param name="kp5">${gains['joint5']['kp']}</param>
+        <param name="kp6">${gains['joint6']['kp']}</param>
+        <param name="kp7">${gains['joint7']['kp']}</param>
+        <param name="kd1">${gains['joint1']['kd']}</param>
+        <param name="kd2">${gains['joint2']['kd']}</param>
+        <param name="kd3">${gains['joint3']['kd']}</param>
+        <param name="kd4">${gains['joint4']['kd']}</param>
+        <param name="kd5">${gains['joint5']['kd']}</param>
+        <param name="kd6">${gains['joint6']['kd']}</param>
+        <param name="kd7">${gains['joint7']['kd']}</param>
+        <param name="kp_hand">${gains['hand']['kp']}</param>
+        <param name="kd_hand">${gains['hand']['kd']}</param>
+        <param name="gravity_comp">${hw['gravity_comp']}</param>
+        <param name="root_link">openarm_body_link0</param>
+        <param name="tip_link">openarm_${side}_hand</param>
+      </hardware>
+      <xacro:real_joint name="openarm_${side}_joint1"/>
+      <xacro:real_joint name="openarm_${side}_joint2"/>
+      <xacro:real_joint name="openarm_${side}_joint3"/>
+      <xacro:real_joint name="openarm_${side}_joint4"/>
+      <xacro:real_joint name="openarm_${side}_joint5"/>
+      <xacro:real_joint name="openarm_${side}_joint6"/>
+      <xacro:real_joint name="openarm_${side}_joint7"/>
+      <xacro:real_joint name="openarm_${side}_finger_joint1"/>
+    </ros2_control>
+  </xacro:macro>
+
+  <xacro:real_arm side="left"/>
+  <xacro:real_arm side="right"/>
+</robot>

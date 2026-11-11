@@ -22,16 +22,18 @@ def generate_launch_description():
         package='robot_state_publisher',
         executable='robot_state_publisher',
         output='both',
-        parameters=[{'robot_description': robot_description, 'use_sim_time': True}],
+        parameters=[{'robot_description': robot_description}],
     )
 
     # MuJoCo 창을 띄우고 그 안의 로봇을 ros2_control 하드웨어로 쓴다.
+    # use_sim_time 을 켜지 않아 시뮬도 실물처럼 wall clock 으로 돌고, 명령 stamp 를 자기 시계와
+    # 비교하는 MoveIt Servo 가 시뮬과 실물에서 같은 설정으로 돈다.
     mujoco = Node(
         package='mujoco_ros2_control',
         executable='ros2_control_node',
         output='both',
         emulate_tty=True,
-        parameters=[{'use_sim_time': True}, ParameterFile(controllers)],
+        parameters=[ParameterFile(controllers)],
         on_exit=Shutdown(),
     )
 

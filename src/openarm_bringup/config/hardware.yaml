@@ -1,0 +1,10 @@
+# 실물 OpenArm v1 양팔의 하드웨어 설정. openarm_real.urdf.xacro 가 읽어 팔마다 OpenArmHW 파라미터로 넣는다.
+
+# 팔마다 연결된 CAN 인터페이스. scripts/can_fd.sh 로 올린 이름과 같아야 한다.
+can_interface:
+  left: can1
+  right: can0
+
+# 관절 토크에 URDF 모델의 중력 G(q) 를 더해 팔 무게를 모터가 든다.
+# 끄면 위치 게인만으로 무게를 버티므로 명령 사이에서 팔이 처진다.
+gravity_comp: true

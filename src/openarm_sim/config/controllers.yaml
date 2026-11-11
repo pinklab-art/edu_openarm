@@ -1,15 +1,15 @@
-# 실물 bringup(openarm_bimanual_controllers.yaml)과 같은 컨트롤러 이름·관절·인터페이스.
-# MuJoCo position actuator 는 velocity 명령을 받지 않아 forward_velocity_controller 는 없다.
+# 실물 bringup 의 controllers.yaml 과 같은 컨트롤러 이름·관절·인터페이스라 시뮬과 실물에서 MoveIt·teleop 이 같은 설정으로 돈다.
+# 그리퍼는 MoveIt 의 GripperCommand 액션을 받는 GripperActionController 다.
 controller_manager:
   ros__parameters:
     update_rate: 500
     joint_state_broadcaster: {type: joint_state_broadcaster/JointStateBroadcaster}
     left_forward_position_controller: {type: forward_command_controller/ForwardCommandController}
     left_joint_trajectory_controller: {type: joint_trajectory_controller/JointTrajectoryController}
-    left_gripper_controller: {type: joint_trajectory_controller/JointTrajectoryController}
+    left_gripper_controller: {type: position_controllers/GripperActionController}
     right_forward_position_controller: {type: forward_command_controller/ForwardCommandController}
     right_joint_trajectory_controller: {type: joint_trajectory_controller/JointTrajectoryController}
-    right_gripper_controller: {type: joint_trajectory_controller/JointTrajectoryController}
+    right_gripper_controller: {type: position_controllers/GripperActionController}
 left_forward_position_controller:
   ros__parameters:
     joints: [openarm_left_joint1, openarm_left_joint2, openarm_left_joint3, openarm_left_joint4, openarm_left_joint5,
@@ -29,6 +29,7 @@ left_joint_trajectory_controller:
     state_publish_rate: 50.0
     action_monitor_rate: 50.0
     allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: true   # MoveIt Servo 가 흘려보내는 궤적은 끝점 속도가 0 이 아니다
     constraints:
       stopped_velocity_tolerance: 0.0
       goal_time: 0.0
@@ -42,11 +43,13 @@ left_joint_trajectory_controller:
       openarm_left_joint7: {trajectory: 0.0, goal: 0.0}
 left_gripper_controller:
   ros__parameters:
-    joints: [openarm_left_finger_joint1]
-    command_interfaces: [position]
-    state_interfaces: [position]
-    interpolation_method: none
-    constraints: {stopped_velocity_tolerance: 0.0, goal_time: 0.0}
+    joint: openarm_left_finger_joint1
+    action_monitor_rate: 20.0
+    goal_tolerance: 0.002
+    max_effort: 10.0
+    allow_stalling: true            # 물체를 쥐어 목표 폭에 못 가도 성공으로 끝낸다
+    stall_velocity_threshold: 0.001
+    stall_timeout: 1.0
 right_forward_position_controller:
   ros__parameters:
     joints: [openarm_right_joint1, openarm_right_joint2, openarm_right_joint3, openarm_right_joint4, openarm_right_joint5,
@@ -66,6 +69,7 @@ right_joint_trajectory_controller:
     state_publish_rate: 50.0
     action_monitor_rate: 50.0
     allow_partial_joints_goal: false
+    allow_nonzero_velocity_at_trajectory_end: true   # MoveIt Servo 가 흘려보내는 궤적은 끝점 속도가 0 이 아니다
     constraints:
       stopped_velocity_tolerance: 0.0
       goal_time: 0.0
@@ -79,8 +83,10 @@ right_joint_trajectory_controller:
       openarm_right_joint7: {trajectory: 0.0, goal: 0.0}
 right_gripper_controller:
   ros__parameters:
-    joints: [openarm_right_finger_joint1]
-    command_interfaces: [position]
-    state_interfaces: [position]
-    interpolation_method: none
-    constraints: {stopped_velocity_tolerance: 0.0, goal_time: 0.0}
+    joint: openarm_right_finger_joint1
+    action_monitor_rate: 20.0
+    goal_tolerance: 0.002
+    max_effort: 10.0
+    allow_stalling: true            # 물체를 쥐어 목표 폭에 못 가도 성공으로 끝낸다
+    stall_velocity_threshold: 0.001
+    stall_timeout: 1.0

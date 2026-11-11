@@ -1,0 +1,712 @@
+// Copyright 2025 Enactic, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "openarm_hardware/openarm_simple_hardware.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <sstream>
+#include <thread>
+#include <vector>
+
+#include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "rclcpp/logging.hpp"
+#include "rclcpp/rclcpp.hpp"
+
+namespace openarm_hardware {
+
+OpenArmHW::OpenArmHW() = default;
+
+OpenArmHW::~OpenArmHW() { stop_mode_services(); }
+
+void OpenArmHW::build_gain_modes() {
+  kp_modes_[MODE_DEFAULT] = kp_;
+  kd_modes_[MODE_DEFAULT] = kd_;
+
+  kp_modes_[MODE_IMPEDANCE].resize(ARM_DOF);
+  kd_modes_[MODE_IMPEDANCE].resize(ARM_DOF);
+  kp_modes_[MODE_ZERO_G].assign(ARM_DOF, 0.0);
+  kd_modes_[MODE_ZERO_G].resize(ARM_DOF);
+  for (size_t i = 0; i < ARM_DOF; ++i) {
+    kp_modes_[MODE_IMPEDANCE][i] = kp_[i] * IMPEDANCE_KP_SCALE;
+    kd_modes_[MODE_IMPEDANCE][i] = kd_[i] * IMPEDANCE_KD_SCALE;
+    // Never above the nominal damping: the floor is there to hold a limp
+    // arm, not to add damping the nominal set did not ask for.
+    kd_modes_[MODE_ZERO_G][i] = std::min(ZERO_G_KD[i], kd_[i]);
+  }
+}
+
+void OpenArmHW::start_mode_services() {
+  std::string suffix = arm_prefix_;
+  if (!suffix.empty() && suffix.back() == '_') suffix.pop_back();
+  const std::string node_name =
+      suffix.empty() ? "openarm_hw" : "openarm_hw_" + suffix;
+
+  rclcpp::NodeOptions options;
+  // The controller manager already parsed the command line; taking it again
+  // here would apply its remappings to this node as well.
+  options.use_global_arguments(false);
+  node_ = std::make_shared<rclcpp::Node>(node_name, options);
+
+  // One service per mode instead of one service taking a mode name: Trigger
+  // is a stock type, so switching a mode needs no message package and no
+  // spelling to get right at the terminal.
+  // "~/" puts them under this node. Without it the name resolves against the
+  // namespace instead, and both arms would register the same three services.
+  const std::array<std::string, MODE_COUNT> names = {
+      "~/gains/default", "~/gains/impedance", "~/gains/zero_gravity"};
+  for (size_t mode = 0; mode < MODE_COUNT; ++mode) {
+    mode_services_[mode] = node_->create_service<std_srvs::srv::Trigger>(
+        names[mode],
+        [this, mode](
+            const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+            std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+          switch_mode(mode, response);
+        });
+  }
+
+  executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+  executor_->add_node(node_);
+  spin_thread_ = std::thread([this]() { executor_->spin(); });
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+              "Gain modes: /%s/gains/{default,impedance,zero_gravity}",
+              node_name.c_str());
+}
+
+void OpenArmHW::stop_mode_services() {
+  if (executor_) {
+    executor_->cancel();
+  }
+  if (spin_thread_.joinable()) {
+    spin_thread_.join();
+  }
+  for (auto& service : mode_services_) {
+    service.reset();
+  }
+  executor_.reset();
+  node_.reset();
+}
+
+void OpenArmHW::switch_mode(
+    size_t mode, std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+  static const std::array<const char*, MODE_COUNT> labels = {
+      "default", "impedance", "zero gravity"};
+
+  // Softening the arm hands its weight to the feed-forward. Without one the
+  // arm would simply fall, so this is refused rather than obeyed.
+  if (mode != MODE_DEFAULT && !gravity_comp_) {
+    response->success = false;
+    response->message =
+        std::string("cannot switch to ") + labels[mode] +
+        ": gravity compensation is off, the arm would drop";
+    RCLCPP_WARN(rclcpp::get_logger("OpenArmHW"), "%s",
+                response->message.c_str());
+    return;
+  }
+
+  // Stiffening after the arm was moved by hand: let write() walk the command
+  // over instead of pulling the arm to wherever the controller still points.
+  // The walk is armed before the gains change, because a single cycle of
+  // full stiffness against a stale command is the very yank it prevents.
+  const size_t previous = mode_.load(std::memory_order_relaxed);
+  bool stiffening = false;
+  for (size_t i = 0; i < ARM_DOF; ++i) {
+    if (kp_modes_[mode][i] > kp_modes_[previous][i]) stiffening = true;
+  }
+  if (stiffening) {
+    resync_pending_.store(true, std::memory_order_release);
+  }
+  // Release pairs with the acquire in write(): a cycle that sees the new mode
+  // also sees the resync armed above.
+  mode_.store(mode, std::memory_order_release);
+
+  std::ostringstream message;
+  message << labels[mode] << " gains: kp";
+  for (size_t i = 0; i < ARM_DOF; ++i) message << ' ' << kp_modes_[mode][i];
+  message << ", kd";
+  for (size_t i = 0; i < ARM_DOF; ++i) message << ' ' << kd_modes_[mode][i];
+  if (stiffening) message << " (walking the command back over)";
+  response->success = true;
+  response->message = message.str();
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "%s",
+              response->message.c_str());
+}
+
+void OpenArmHW::update_targets(const rclcpp::Duration& period) {
+  if (resync_pending_.exchange(false, std::memory_order_acq_rel)) {
+    std::copy_n(pos_states_.begin(), ARM_DOF, pos_targets_.begin());
+    resync_active_ = true;
+  }
+  if (!resync_active_) {
+    std::copy_n(pos_commands_.begin(), ARM_DOF, pos_targets_.begin());
+    return;
+  }
+
+  double dt = period.seconds();
+  if (!(dt > 0.0)) dt = DEFAULT_PERIOD;
+  // A period that long means the loop stalled; stepping the whole of it at
+  // once is the jump this walk exists to avoid.
+  dt = std::min(dt, 0.05);
+  const double step = RESYNC_SPEED * dt;
+
+  bool arrived = true;
+  for (size_t i = 0; i < ARM_DOF; ++i) {
+    const double error = pos_commands_[i] - pos_targets_[i];
+    if (std::abs(error) <= step) {
+      pos_targets_[i] = pos_commands_[i];
+    } else {
+      pos_targets_[i] += std::copysign(step, error);
+      arrived = false;
+    }
+  }
+  if (arrived) {
+    resync_active_ = false;
+    RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+                "Command caught up with the arm; the controller drives again");
+  }
+}
+
+bool OpenArmHW::parse_config(const hardware_interface::HardwareInfo& info) {
+  // Parse CAN interface (default: can0)
+  auto it = info.hardware_parameters.find("can_interface");
+  can_interface_ = (it != info.hardware_parameters.end()) ? it->second : "can0";
+
+  // Parse arm prefix (default: empty for single arm, "left_" or "right_" for
+  // bimanual)
+  it = info.hardware_parameters.find("arm_prefix");
+  arm_prefix_ = (it != info.hardware_parameters.end()) ? it->second : "";
+
+  // Parse gripper enable (default: true for V10)
+  it = info.hardware_parameters.find("hand");
+  if (it == info.hardware_parameters.end()) {
+    hand_ = true;  // Default to true for V10
+  } else {
+    // Handle both "true"/"True" and "false"/"False"
+    std::string value = it->second;
+    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+    hand_ = (value == "true");
+  }
+
+  // Parse CAN-FD enable (default: true for V10)
+  it = info.hardware_parameters.find("can_fd");
+  if (it == info.hardware_parameters.end()) {
+    can_fd_ = true;  // Default to true for V10
+  } else {
+    // Handle both "true"/"True" and "false"/"False"
+    std::string value = it->second;
+    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+    can_fd_ = (value == "true");
+  }
+
+  // Parse control gains
+  for (size_t i = 1; i <= ARM_DOF; ++i) {
+    it = info.hardware_parameters.find("kp" + std::to_string(i));
+    if (it != info.hardware_parameters.end()) {
+      kp_[i - 1] = std::stod(it->second);
+    }
+    it = info.hardware_parameters.find("kd" + std::to_string(i));
+    if (it != info.hardware_parameters.end()) {
+      kd_[i - 1] = std::stod(it->second);
+    }
+  }
+  // Parse ee_type (default: parallel_link for v10)
+  it = info.hardware_parameters.find("ee_type");
+  ee_type_ =
+      (it != info.hardware_parameters.end()) ? it->second : "parallel_link";
+
+  // --- Gravity feed-forward --------------------------------------
+  it = info.hardware_parameters.find("gravity_comp");
+  if (it != info.hardware_parameters.end()) {
+    std::string value = it->second;
+    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+    gravity_comp_ = (value == "true" || value == "1" || value == "on");
+  }
+  // Chain endpoints. The root must be world-aligned because gravity is
+  // expressed in it. The tip decides where the modelled arm stops: a KDL chain
+  // is one branch, so whatever hangs off the tip (the prismatic fingers, the
+  // wiring, anything held) is outside it and is what the payload below stands
+  // for. link7 is the default because it is the last link the seven joints
+  // carry with no end effector attached.
+  it = info.hardware_parameters.find("root_link");
+  root_link_ = (it != info.hardware_parameters.end()) ? it->second
+                                                      : "openarm_body_link0";
+  it = info.hardware_parameters.find("tip_link");
+  tip_link_ = (it != info.hardware_parameters.end())
+                  ? it->second
+                  : "openarm_" + arm_prefix_ + "link7";
+
+  // Measured tip mass and its CoM in the tip frame ("x y z", m).
+  it = info.hardware_parameters.find("payload_mass");
+  if (it != info.hardware_parameters.end() && !it->second.empty()) {
+    payload_mass_ = std::stod(it->second);
+  }
+  it = info.hardware_parameters.find("payload_com");
+  if (it != info.hardware_parameters.end() && !it->second.empty()) {
+    std::istringstream iss(it->second);
+    for (size_t i = 0; i < payload_com_.size(); ++i) {
+      double v = 0.0;
+      if (!(iss >> v)) break;
+      payload_com_[i] = v;
+    }
+  }
+
+  // Per-joint constant torque offset ("b1 .. b7", Nm) from calibration.
+  it = info.hardware_parameters.find("tau_bias");
+  if (it != info.hardware_parameters.end() && !it->second.empty()) {
+    std::istringstream iss(it->second);
+    for (size_t i = 0; i < ARM_DOF; ++i) {
+      double v = 0.0;
+      if (!(iss >> v)) break;
+      tau_bias_[i] = std::clamp(v, -TAU_BIAS_LIMIT, TAU_BIAS_LIMIT);
+    }
+  }
+
+  // Feed-forward cap ("c1 .. c7", Nm). A short list leaves the rest at the
+  // rated-effort defaults rather than opening the cap.
+  it = info.hardware_parameters.find("saturation_cap");
+  if (it != info.hardware_parameters.end() && !it->second.empty()) {
+    std::istringstream iss(it->second);
+    for (size_t i = 0; i < ARM_DOF; ++i) {
+      double v = 0.0;
+      if (!(iss >> v)) break;
+      if (v > 0.0) saturation_cap_[i] = v;
+    }
+  }
+
+  if (hand_) {
+    it = info.hardware_parameters.find("kp_hand");
+    if (it != info.hardware_parameters.end()) {
+      gripper_kp_ = std::stod(it->second);
+    }
+    it = info.hardware_parameters.find("kd_hand");
+    if (it != info.hardware_parameters.end()) {
+      gripper_kd_ = std::stod(it->second);
+    }
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+              "Configuration: CAN=%s, arm_prefix=%s, hand=%s, can_fd=%s, "
+              "gravity_comp=%s",
+              can_interface_.c_str(), arm_prefix_.c_str(),
+              hand_ ? "enabled" : "disabled", can_fd_ ? "enabled" : "disabled",
+              gravity_comp_ ? "enabled" : "disabled");
+  if (gravity_comp_) {
+    RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+                "Gravity feed-forward: %s -> %s, payload %.3f kg at "
+                "(%.3f, %.3f, %.3f) m, tau_bias %.2f %.2f %.2f %.2f %.2f %.2f "
+                "%.2f Nm",
+                root_link_.c_str(), tip_link_.c_str(), payload_mass_,
+                payload_com_[0], payload_com_[1], payload_com_[2],
+                tau_bias_[0], tau_bias_[1], tau_bias_[2], tau_bias_[3],
+                tau_bias_[4], tau_bias_[5], tau_bias_[6]);
+  }
+  return true;
+}
+
+void OpenArmHW::generate_joint_names() {
+  joint_names_.clear();
+  // TODO: read from urdf properly and sort in the future.
+  // Currently, the joint names are hardcoded for order consistency to align
+  // with hardware. Generate arm joint names: openarm_{arm_prefix}joint{N}
+  for (size_t i = 1; i <= ARM_DOF; ++i) {
+    std::string joint_name =
+        "openarm_" + arm_prefix_ + "joint" + std::to_string(i);
+    joint_names_.push_back(joint_name);
+  }
+
+  // Generate gripper joint name if enabled
+  if (hand_) {
+    std::string gripper_joint_name = "openarm_" + arm_prefix_ + "finger_joint1";
+    joint_names_.push_back(gripper_joint_name);
+    RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "Added gripper joint: %s",
+                gripper_joint_name.c_str());
+  } else {
+    RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+                "Gripper joint NOT added because hand_=false");
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+              "Generated %zu joint names for arm prefix '%s'",
+              joint_names_.size(), arm_prefix_.c_str());
+}
+
+hardware_interface::CallbackReturn OpenArmHW::on_init(
+    const hardware_interface::HardwareInfo& info) {
+  if (hardware_interface::SystemInterface::on_init(info) !=
+      CallbackReturn::SUCCESS) {
+    return CallbackReturn::ERROR;
+  }
+  // Parse configuration
+  if (!parse_config(info)) {
+    return CallbackReturn::ERROR;
+  }
+
+  // Generate joint names based on arm prefix
+  generate_joint_names();
+
+  // Gain modes are derived from the gains just parsed, and the services that
+  // pick between them come up with the hardware.
+  build_gain_modes();
+  start_mode_services();
+
+  // Build the KDL model from the exact URDF this robot was loaded with, so the
+  // compensation can never drift from the description. A model that will not
+  // build turns compensation off rather than feeding write() garbage.
+  if (gravity_comp_) {
+    dynamics_ =
+        std::make_unique<Dynamics>(info.original_xml, root_link_, tip_link_);
+    dynamics_->SetPayload(payload_mass_, payload_com_[0], payload_com_[1],
+                          payload_com_[2]);
+    if (!dynamics_->Init() || dynamics_->joint_count() != ARM_DOF) {
+      RCLCPP_ERROR(rclcpp::get_logger("OpenArmHW"),
+                   "Gravity feed-forward disabled: the chain %s -> %s did not "
+                   "build with %zu joints",
+                   root_link_.c_str(), tip_link_.c_str(), ARM_DOF);
+      dynamics_.reset();
+      gravity_comp_ = false;
+    }
+  }
+
+  // Validate joint count (7 arm joints + optional gripper)
+  size_t expected_joints = ARM_DOF + (hand_ ? 1 : 0);
+  if (joint_names_.size() != expected_joints) {
+    RCLCPP_ERROR(rclcpp::get_logger("OpenArmHW"),
+                 "Generated %zu joint names, expected %zu", joint_names_.size(),
+                 expected_joints);
+    return CallbackReturn::ERROR;
+  }
+
+  // Initialize OpenArm with configurable CAN-FD setting
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+              "Initializing OpenArm on %s with CAN-FD %s...",
+              can_interface_.c_str(), can_fd_ ? "enabled" : "disabled");
+  openarm_ =
+      std::make_unique<openarm::can::socket::OpenArm>(can_interface_, can_fd_);
+
+  // Initialize arm motors with V10 defaults
+  openarm_->init_arm_motors(DEFAULT_MOTOR_TYPES, DEFAULT_SEND_CAN_IDS,
+                            DEFAULT_RECV_CAN_IDS);
+
+  // Initialize gripper if enabled
+  if (hand_) {
+    RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "Initializing gripper...");
+    openarm_->init_gripper_motor(DEFAULT_GRIPPER_MOTOR_TYPE,
+                                 DEFAULT_GRIPPER_SEND_CAN_ID,
+                                 DEFAULT_GRIPPER_RECV_CAN_ID);
+  }
+
+  // Initialize state and command vectors based on generated joint count
+  const size_t total_joints = joint_names_.size();
+  pos_commands_.resize(total_joints, 0.0);
+  vel_commands_.resize(total_joints, 0.0);
+  tau_commands_.resize(total_joints, 0.0);
+  pos_states_.resize(total_joints, 0.0);
+  vel_states_.resize(total_joints, 0.0);
+  tau_states_.resize(total_joints, 0.0);
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"),
+              "OpenArm V10 Simple HW initialized successfully");
+
+  return CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn OpenArmHW::on_configure(
+    const rclcpp_lifecycle::State& /*previous_state*/) {
+  // Set callback mode to ignore during configuration
+  openarm_->refresh_all();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  openarm_->recv_all();
+
+  return CallbackReturn::SUCCESS;
+}
+
+std::vector<hardware_interface::StateInterface>
+OpenArmHW::export_state_interfaces() {
+  std::vector<hardware_interface::StateInterface> state_interfaces;
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        joint_names_[i], hardware_interface::HW_IF_POSITION, &pos_states_[i]));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        joint_names_[i], hardware_interface::HW_IF_VELOCITY, &vel_states_[i]));
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        joint_names_[i], hardware_interface::HW_IF_EFFORT, &tau_states_[i]));
+  }
+
+  return state_interfaces;
+}
+
+std::vector<hardware_interface::CommandInterface>
+OpenArmHW::export_command_interfaces() {
+  std::vector<hardware_interface::CommandInterface> command_interfaces;
+  // TODO: consider exposing only needed interfaces to avoid undefined behavior.
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        joint_names_[i], hardware_interface::HW_IF_POSITION,
+        &pos_commands_[i]));
+    command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        joint_names_[i], hardware_interface::HW_IF_VELOCITY,
+        &vel_commands_[i]));
+    command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        joint_names_[i], hardware_interface::HW_IF_EFFORT, &tau_commands_[i]));
+  }
+
+  return command_interfaces;
+}
+
+hardware_interface::CallbackReturn OpenArmHW::on_activate(
+    const rclcpp_lifecycle::State& /*previous_state*/) {
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "Activating OpenArm V10...");
+  openarm_->set_callback_mode_all(openarm::damiao_motor::CallbackMode::STATE);
+  openarm_->enable_all();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  openarm_->recv_all();
+
+  // Wait until real joint states arrive. Commanding before the first
+  // state frames would treat the default zeros as the current pose and
+  // yank the arm.
+  // The motors report state in response to commands, so probe with a
+  // zero-gain, zero-torque MIT command that moves nothing.
+  bool got_state = false;
+  const std::vector<openarm::damiao_motor::MITParam> probe(
+      ARM_DOF, openarm::damiao_motor::MITParam{0.0, 0.0, 0.0, 0.0, 0.0});
+  for (int attempt = 0; attempt < 200 && !got_state; ++attempt) {
+    openarm_->get_arm().mit_control_all(probe);
+    if (hand_) {
+      openarm_->get_gripper().mit_control_all({{0.0, 0.0, 0.0, 0.0, 0.0}});
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    openarm_->recv_all(1000);
+    for (const auto& motor : openarm_->get_arm().get_motors()) {
+      if (motor.get_position() != 0.0) {
+        got_state = true;
+        break;
+      }
+    }
+  }
+  if (!got_state) {
+    RCLCPP_ERROR(rclcpp::get_logger("OpenArmHW"),
+                 "No joint states received on %s within 2 s; "
+                 "check CAN bus and power",
+                 can_interface_.c_str());
+    return CallbackReturn::ERROR;
+  }
+
+  // Walk slowly to the zero pose, then keep commanding it. Homing needs the
+  // stiffness to follow its own interpolation, so a session that was left in
+  // a soft mode starts over at the nominal gains.
+  mode_.store(MODE_DEFAULT, std::memory_order_relaxed);
+  resync_pending_.store(false, std::memory_order_relaxed);
+  resync_active_ = false;
+  return_to_zero();
+  for (size_t i = 0; i < ARM_DOF && i < pos_commands_.size(); ++i) {
+    pos_commands_[i] = ZERO_POSITION[i];
+  }
+  if (hand_ && pos_commands_.size() > ARM_DOF) {
+    pos_commands_[ARM_DOF] = GRIPPER_JOINT_1_POSITION;  // closed
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "OpenArm V10 activated");
+  return CallbackReturn::SUCCESS;
+}
+
+hardware_interface::CallbackReturn OpenArmHW::on_deactivate(
+    const rclcpp_lifecycle::State& /*previous_state*/) {
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "Deactivating OpenArm V10...");
+
+  // Disable all motors (like full_arm.cpp exit)
+  for (int i = 0; i < 3; ++i) {
+    openarm_->disable_all();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    openarm_->recv_all();
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "OpenArm V10 deactivated");
+  return CallbackReturn::SUCCESS;
+}
+
+hardware_interface::return_type OpenArmHW::read(
+    const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/) {
+  // Receive all motor states
+  openarm_->refresh_all();
+  openarm_->recv_all();
+
+  // Read arm joint states
+  const auto& arm_motors = openarm_->get_arm().get_motors();
+  for (size_t i = 0; i < ARM_DOF && i < arm_motors.size(); ++i) {
+    pos_states_[i] = arm_motors[i].get_position();
+    vel_states_[i] = arm_motors[i].get_velocity();
+    tau_states_[i] = arm_motors[i].get_torque();
+  }
+
+  // Read gripper state if enabled
+  if (hand_ && joint_names_.size() > ARM_DOF) {
+    const auto& gripper_motors = openarm_->get_gripper().get_motors();
+    if (!gripper_motors.empty()) {
+      // TODO the mappings are approximates
+      // Convert motor position (radians) to joint value (0-0.044m)
+      double motor_pos = gripper_motors[0].get_position();
+      pos_states_[ARM_DOF] = motor_radians_to_joint(motor_pos);
+
+      // The position map is linear through zero, so it maps velocity too.
+      // GripperActionController's stall check reads this velocity.
+      vel_states_[ARM_DOF] =
+          motor_radians_to_joint(gripper_motors[0].get_velocity());
+      // Unimplemented: torque mapping
+      tau_states_[ARM_DOF] = 0;  // gripper_motors[0].get_torque();
+    }
+  }
+
+  return hardware_interface::return_type::OK;
+}
+
+void OpenArmHW::update_feedforward() {
+  // tau_bias is solved together with the payload from the same measurement, so
+  // the two are one calibration result and go on or off together.
+  if (!gravity_comp_ || !dynamics_) {
+    std::fill(feedforward_.begin(), feedforward_.end(), 0.0);
+    return;
+  }
+  dynamics_->GetGravity(pos_states_.data(), feedforward_.data());
+  // Absolute per-joint cap, applied every cycle the compensation is alive.
+  // It is the last line of defence against a bad payload estimate: the
+  // calibration writes a number into a file, and nothing between that file
+  // and the motors checks it but this.
+  for (size_t i = 0; i < ARM_DOF; ++i) {
+    feedforward_[i] = std::clamp(feedforward_[i], -saturation_cap_[i],
+                                 saturation_cap_[i]) +
+                      tau_bias_[i];
+  }
+}
+
+hardware_interface::return_type OpenArmHW::write(
+    const rclcpp::Time& /*time*/, const rclcpp::Duration& period) {
+  // Model feed-forward: tau_ff = tau_cmd + G(q) + tau_bias so the motors
+  // hold the arm's weight and the MIT PD term only corrects tracking error.
+  // Gains of whichever mode the services last selected, read before the
+  // targets so a mode switch and its resync land in the same cycle.
+  const size_t mode = mode_.load(std::memory_order_acquire);
+  const std::vector<double>& kp = kp_modes_[mode];
+  const std::vector<double>& kd = kd_modes_[mode];
+
+  update_feedforward();
+  update_targets(period);
+
+  // Control arm motors with MIT control
+  for (size_t i = 0; i < ARM_DOF; ++i) {
+    arm_params_[i] = {kp[i], kd[i], pos_targets_[i], vel_commands_[i],
+                      tau_commands_[i] + feedforward_[i]};
+  }
+  openarm_->get_arm().mit_control_all(arm_params_);
+  // Control gripper if enabled
+  if (hand_ && joint_names_.size() > ARM_DOF) {
+    // TODO the true mappings are unimplemented.
+    double motor_command = joint_to_motor_radians(pos_commands_[ARM_DOF]);
+    gripper_params_[0] = {gripper_kp_, gripper_kd_, motor_command, 0.0, 0.0};
+    openarm_->get_gripper().mit_control_all(gripper_params_);
+  }
+  openarm_->recv_all(100);
+  return hardware_interface::return_type::OK;
+}
+
+void OpenArmHW::return_to_zero() {
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "Returning to zero position...");
+
+  const auto& arm_motors = openarm_->get_arm().get_motors();
+  std::vector<double> start_pos(ARM_DOF, 0.0);
+  for (size_t i = 0; i < ARM_DOF && i < arm_motors.size(); ++i) {
+    start_pos[i] = arm_motors[i].get_position();
+  }
+
+  // The gripper homes to closed, interpolated in motor radians.
+  double gripper_start = 0.0;
+  const double gripper_target = joint_to_motor_radians(GRIPPER_JOINT_1_POSITION);
+  if (hand_ && !openarm_->get_gripper().get_motors().empty()) {
+    gripper_start = openarm_->get_gripper().get_motors()[0].get_position();
+  }
+
+  // Cap the joint speed so a distant starting pose still homes slowly.
+  const double max_speed = 0.4;  // rad/s
+  const int step_ms = 10;
+  double max_dist = std::abs(gripper_target - gripper_start);
+  for (size_t i = 0; i < ARM_DOF; ++i) {
+    max_dist = std::max(max_dist, std::abs(ZERO_POSITION[i] - start_pos[i]));
+  }
+  const int steps = std::max(
+      200,
+      static_cast<int>(std::ceil(max_dist / max_speed * 1000.0 / step_ms)));
+
+  for (int step = 0; step <= steps; ++step) {
+    double t = static_cast<double>(step) / steps;
+
+    // Homing runs before the controllers do, so pos_states_ is not being
+    // refreshed by read(). Take the pose straight from the motors, which
+    // recv_all() at the end of each step keeps current.
+    for (size_t i = 0; i < ARM_DOF && i < arm_motors.size(); ++i) {
+      pos_states_[i] = arm_motors[i].get_position();
+    }
+    update_feedforward();
+
+    std::vector<openarm::damiao_motor::MITParam> arm_params;
+    for (size_t i = 0; i < ARM_DOF; ++i) {
+      double target = start_pos[i] + t * (ZERO_POSITION[i] - start_pos[i]);
+      arm_params.push_back({kp_modes_[MODE_DEFAULT][i],
+                            kd_modes_[MODE_DEFAULT][i], target, 0.0,
+                            feedforward_[i]});
+    }
+    openarm_->get_arm().mit_control_all(arm_params);
+
+    if (hand_) {
+      double gripper_pos = gripper_start + t * (gripper_target - gripper_start);
+      openarm_->get_gripper().mit_control_all(
+          {{gripper_kp_, gripper_kd_, gripper_pos, 0.0, 0.0}});
+    }
+
+    openarm_->recv_all();
+    std::this_thread::sleep_for(std::chrono::milliseconds(step_ms));
+  }
+
+  RCLCPP_INFO(rclcpp::get_logger("OpenArmHW"), "Reached zero position");
+}
+
+double OpenArmHW::joint_to_motor_radians(double joint_value) {
+  if (ee_type_ == "pinch_gripper") {
+    // revolute: joint 0-1.5708 rad -> motor 0-1.5708
+    return joint_value;
+  } else {
+    // parallel_link (prismatic): 0-0.044m -> 0 to -1.0472 rad
+    return (joint_value / GRIPPER_JOINT_0_POSITION) * GRIPPER_MOTOR_1_RADIANS;
+  }
+}
+
+double OpenArmHW::motor_radians_to_joint(double motor_radians) {
+  if (ee_type_ == "pinch_gripper") {
+    // revolute:
+    return motor_radians;
+  } else {
+    // parallel_link (prismatic)
+    return GRIPPER_JOINT_0_POSITION * (motor_radians / GRIPPER_MOTOR_1_RADIANS);
+  }
+}
+
+}  // namespace openarm_hardware
+
+#include "pluginlib/class_list_macros.hpp"
+
+PLUGINLIB_EXPORT_CLASS(openarm_hardware::OpenArmHW,
+                       hardware_interface::SystemInterface)
