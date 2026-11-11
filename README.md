@@ -6,6 +6,7 @@ OpenArm v1 실습 코드. Ubuntu 24.04 · ROS 2 Jazzy 기준.
 
 - OpenArm v1 본체
 - CAN FD 어댑터 PEAK-System PCAN-USB Pro FD (드라이버 `peak_usb` 는 Ubuntu 커널에 포함)
+- OpenArm mini 리더암 (teleop)
 - ROS 2 Jazzy
 
 ## 빌드
@@ -41,9 +42,10 @@ source install/setup.bash
 | [openarm_bringup](src/openarm_bringup/README.md) | 실물 실행 |
 | [openarm_moveit](src/openarm_moveit/README.md) | MoveIt 설정과 예제 |
 | [openarm_safety](src/openarm_safety/README.md) | teleop·policy 명령의 안전 필터 |
+| [openarm_mini](src/openarm_mini/README.md) | OpenArm mini 리더암 teleop |
 
 시뮬레이션은 `openarm_sim`, 실물은 스크립트로 CAN FD 설정·모터 검사·영점 세팅을 마친 뒤 `openarm_bringup` 을 띄우고,
-그 위에서 `openarm_moveit`·`openarm_safety` 를 같은 명령으로 쓴다.
+그 위에서 `openarm_moveit`·`openarm_safety`·`openarm_mini` 를 같은 명령으로 쓴다.
 
 ## 스크립트
 

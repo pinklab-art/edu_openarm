@@ -13,12 +13,14 @@
 """
 
 import math
+import signal
 
 import rclpy
 from rclpy.action import ActionClient
-from rclpy.executors import ExternalShutdownException
 from rclpy.exceptions import ParameterUninitializedException
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from rclpy.parameter import Parameter
 
 from control_msgs.action import GripperCommand
@@ -196,12 +198,16 @@ class SafetyFilterNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    # Ctrl+C 는 터미널과 launch 양쪽에서 SIGINT 를 두 번 보낸다. 처리기는 멈춤 표시만 남기고
+    # 루프가 그 표시를 보고 빠져나와 정리하므로, 정리 도중 두 번째 신호가 와도 끊기지 않는다.
+    stop = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.append(True))
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = SafetyFilterNode()
-    try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    while not stop:
+        executor.spin_once(timeout_sec=0.1)
+    node.destroy_node()
+    rclpy.shutdown()

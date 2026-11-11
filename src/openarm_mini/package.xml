@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>openarm_mini</name>
+  <version>0.1.0</version>
+  <description>OpenArm mini 리더암 teleop. Feetech 서보 자세를 관절 명령으로 바꿔 안전 필터로 보내는 노드와 udev·서보 id·캘리브레이션 CLI.</description>
+  <maintainer email="woolim@pinklab.art">Woolim Park</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ament_index_python</depend>
+  <depend>python3-serial</depend>
+  <depend>python3-yaml</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>openarm_safety</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
