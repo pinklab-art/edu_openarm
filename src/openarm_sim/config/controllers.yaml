@@ -24,7 +24,7 @@ left_joint_trajectory_controller:
     interface_name: position
     command_interfaces: [position]
     state_interfaces: [position]
-    interpolation_method: none
+    interpolation_method: splines
     interpolate_from_desired_state: true
     state_publish_rate: 50.0
     action_monitor_rate: 50.0
@@ -64,7 +64,7 @@ right_joint_trajectory_controller:
     interface_name: position
     command_interfaces: [position]
     state_interfaces: [position]
-    interpolation_method: none
+    interpolation_method: splines
     interpolate_from_desired_state: true
     state_publish_rate: 50.0
     action_monitor_rate: 50.0
