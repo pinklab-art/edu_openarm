@@ -1,0 +1,21 @@
+# LeRobot imitation learning 설정. 기록·추론이 모두 이 파일을 읽는다.
+
+arm: right                  # 기록·추론할 팔. right 는 can0, left 는 can1
+fps: 30                     # 기록·추론 주기 [Hz]. 카메라도 이 framerate 로 연다
+robot_type: openarm_v1      # 데이터셋 메타데이터에 남는 로봇 이름
+display: true               # 기록·추론 중 rerun 창에 카메라 영상과 관절값 표시
+
+# 카메라 이름 → 장치. 이름이 데이터셋의 observation.images.<이름> 이 된다.
+# 장치 번호는 `lerobot-find-cameras opencv` 가 찍은 사진으로 확인한다. 웹캠 하나가 /dev/video 를 두 개씩 잡으므로 사진이 나오는 번호를 쓴다.
+cameras:
+  top: /dev/video0          # 작업대 위에 고정한 카메라
+  wrist: /dev/video2        # 손목 카메라
+image_width: 640
+image_height: 480
+
+dataset:
+  repo_id: local/openarm_pick                       # 저장 위치 ~/.cache/huggingface/lerobot/<repo_id>
+  task: pick up the cube and place it in the box    # 에피소드마다 남는 작업 설명
+
+policy:
+  device: cuda              # GPU 가 없으면 cpu

@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+# PATH 의 python3 로 돈다. .venv_lerobot 을 activate 해야 LeRobot·torch 를 찾는다.
+try:
+    from openarm_lerobot.record import main
+except ModuleNotFoundError as error:
+    raise SystemExit(f'{error.name} 를 찾지 못했습니다. source ~/edu_openarm/.venv_lerobot/bin/activate 를 먼저 하세요')
+
+if __name__ == '__main__':
+    main()

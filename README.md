@@ -31,6 +31,13 @@ cd ~/edu_openarm
 source install/setup.bash
 ```
 
+ROS 노드가 이 PC 안에서만 서로를 찾도록 처음 한 번 설정하고 터미널을 새로 연다. 설정하지 않으면 같은 네트워크의 다른 PC 와
+`/joint_states`·관절 명령 topic 이 섞여, 옆 PC 의 명령이 내 팔에 들어갈 수 있다.
+
+```bash
+echo 'export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' >> ~/.bashrc
+```
+
 ## 패키지
 
 | 패키지 | 내용 |
@@ -43,9 +50,10 @@ source install/setup.bash
 | [openarm_moveit](src/openarm_moveit/README.md) | MoveIt 설정과 예제 |
 | [openarm_safety](src/openarm_safety/README.md) | teleop·policy 명령의 안전 필터 |
 | [openarm_mini](src/openarm_mini/README.md) | OpenArm mini 리더암 teleop |
+| [openarm_lerobot](src/openarm_lerobot/README.md) | 한 팔 imitation learning — ROS 로 시연 기록, LeRobot 0.7.0 으로 ACT 학습, policy 추론 |
 
 시뮬레이션은 `openarm_sim`, 실물은 스크립트로 CAN FD 설정·모터 검사·영점 세팅을 마친 뒤 `openarm_bringup` 을 띄우고,
-그 위에서 `openarm_moveit`·`openarm_safety`·`openarm_mini` 를 같은 명령으로 쓴다.
+그 위에서 `openarm_moveit`·`openarm_safety`·`openarm_mini` 를 같은 명령으로 쓴다. `openarm_lerobot` 은 실물에서만 쓴다.
 
 ## 스크립트
 

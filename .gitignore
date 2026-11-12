@@ -223,3 +223,7 @@ __marimo__/
 install/
 log/
 
+
+# LeRobot
+.venv_lerobot
+outputs/

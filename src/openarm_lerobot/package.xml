@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>openarm_lerobot</name>
+  <version>0.1.0</version>
+  <description>OpenArm v1 한 팔 imitation learning. mini teleop 시연을 LeRobot 데이터셋으로 기록하는 노드, 학습한 policy 로 안전 필터에 명령을 보내는 노드.</description>
+  <maintainer email="woolim@pinklab.art">Woolim Park</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>ament_index_python</depend>
+  <depend>python3-yaml</depend>
+
+  <exec_depend>openarm_safety</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
