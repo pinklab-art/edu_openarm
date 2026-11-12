@@ -2,16 +2,12 @@
 
 OpenArm v1 실습 코드. Ubuntu 24.04 · ROS 2 Jazzy 기준.
 
-## 준비물
-
-- OpenArm v1 본체
-- CAN FD 어댑터 PEAK-System PCAN-USB Pro FD (드라이버 `peak_usb` 는 Ubuntu 커널에 포함)
-- OpenArm mini 리더암 (teleop)
-- ROS 2 Jazzy
+설치·실물 준비·실행·문제 해결은 [wiki](https://github.com/pinklab-art/edu_openarm/wiki) 에 있다.
 
 ## 빌드
 
 ```bash
+git clone https://github.com/pinklab-art/edu_openarm.git ~/edu_openarm
 sudo apt install -y ros-dev-tools
 sudo rosdep init              # 처음 한 번. 이미 했으면 에러가 나도 넘어간다
 rosdep update
@@ -22,21 +18,7 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 ```
 
-`2 packages had stderr output: openarm_can openarm_hardware` 는 upstream 코드의 경고라 무시해도 된다.
-
-터미널마다 먼저 워크스페이스를 불러온다.
-
-```bash
-cd ~/edu_openarm
-source install/setup.bash
-```
-
-ROS 노드가 이 PC 안에서만 서로를 찾도록 처음 한 번 설정하고 터미널을 새로 연다. 설정하지 않으면 같은 네트워크의 다른 PC 와
-`/joint_states`·관절 명령 topic 이 섞여, 옆 PC 의 명령이 내 팔에 들어갈 수 있다.
-
-```bash
-echo 'export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' >> ~/.bashrc
-```
+ROS discovery 범위 설정과 가상환경은 wiki 의 [설치 및 빌드](https://github.com/pinklab-art/edu_openarm/wiki/설치-및-빌드)를 따른다.
 
 ## 패키지
 
@@ -44,77 +26,10 @@ echo 'export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST' >> ~/.bashrc
 | --- | --- |
 | [openarm_can](src/openarm_can/README.md) | `enactic/openarm_can` 1.4.1. 자동 영점 도구에 위치값 wrap 안전장치를 넣고 기본 `--robot-version` 을 `v1` 로 바꿈 |
 | [openarm_description](src/openarm_description/README.md) | `enactic/openarm_description` 의 v1 URDF·mesh. gripper finger 를 soft finger(fin ray)와 `arx5_mounter` 로 바꿈, TCP 는 finger 끝에서 11 mm 안쪽 |
-| [openarm_sim](src/openarm_sim/README.md) | MuJoCo 시뮬레이션 |
-| [openarm_hardware](src/openarm_hardware/README.md) | 실물 ros2_control 하드웨어 플러그인 |
-| [openarm_bringup](src/openarm_bringup/README.md) | 실물 실행 |
-| [openarm_moveit](src/openarm_moveit/README.md) | MoveIt 설정과 예제 |
-| [openarm_safety](src/openarm_safety/README.md) | teleop·policy 명령의 안전 필터 |
-| [openarm_mini](src/openarm_mini/README.md) | OpenArm mini 리더암 teleop |
-| [openarm_lerobot](src/openarm_lerobot/README.md) | 한 팔 imitation learning — ROS 로 시연 기록, LeRobot 0.7.0 으로 ACT 학습, policy 추론 |
-
-시뮬레이션은 `openarm_sim`, 실물은 스크립트로 CAN FD 설정·모터 검사·영점 세팅을 마친 뒤 `openarm_bringup` 을 띄우고,
-그 위에서 `openarm_moveit`·`openarm_safety`·`openarm_mini` 를 같은 명령으로 쓴다. `openarm_lerobot` 은 실물에서만 쓴다.
-
-## 스크립트
-
-| 스크립트 | 용도 |
-| --- | --- |
-| `scripts/can_fd.sh` | CAN 인터페이스를 CAN FD(bitrate 1 Mbps, dbitrate 5 Mbps)로 올린다 |
-| `scripts/motor_check.sh` | 팔마다 모터 8개의 응답과 상태를 읽는다(토크는 켜지 않음) |
-| `scripts/zero_manual.sh` | 손으로 맞춘 지금 자세를 모터 8개의 영점으로 기록한다(토크는 켜지 않음) |
-| `scripts/zero_auto.sh` | 관절마다 하드스톱을 찾아 영점을 잡는다(모터가 스스로 움직임) |
-
-### CAN FD 설정
-
-```bash
-./scripts/can_fd.sh          # can0(오른팔), can1(왼팔)
-./scripts/can_fd.sh can1     # 지정한 인터페이스만
-```
-
-재부팅하면 설정이 풀리므로 부팅할 때마다 다시 실행한다.
-
-### 모터 검사
-
-```bash
-./scripts/motor_check.sh          # can0(오른팔), can1(왼팔)
-./scripts/motor_check.sh can1     # 지정한 인터페이스만
-```
-
-모터 8개(`0x01`~`0x08`)가 모두 응답하고 `SILENT`·`FAULT` 표시가 없으면 정상이다.
-
-### 영점 세팅 — 수동
-
-수동 영점을 먼저 하고, 필요하면 전원을 껐다 켠 뒤 자동 영점으로 다시 잡는다. 수동을 먼저 하면 위치값이 0 근처에서 시작해 자동 영점 도중 값이 튀는 문제를 피한다.
-
-1. 팔을 손으로 영점 자세에 맞춘다.
-2. 영점을 기록한다.
-
-   ```bash
-   ./scripts/zero_manual.sh          # can0(오른팔), can1(왼팔)
-   ./scripts/zero_manual.sh can1     # 지정한 인터페이스만
-   ```
-
-3. `./scripts/motor_check.sh` 로 모터 8개의 `pos` 가 0 근처인지 확인한다.
-
-### 영점 세팅 — 자동
-
-모터를 켜고 관절을 하나씩 하드스톱까지 밀어 기준을 잡은 뒤, 영점 자세로 돌아와 기록한다.
-Python 바인딩이 필요하므로 처음 한 번 가상환경을 만든다.
-
-```bash
-sudo apt install -y python3-venv python3-dev
-cd ~/edu_openarm
-source install/setup.bash
-python3 -m venv .venv
-.venv/bin/pip install numpy ./src/openarm_can/python
-```
-
-팔 주변을 비우고, 비상시 전원을 바로 끌 수 있게 한 뒤 팔마다 한 번씩 실행한다.
-
-```bash
-./scripts/zero_auto.sh right_arm   # can0
-./scripts/zero_auto.sh left_arm    # can1
-```
-
-영점을 기록한 직후(수동·자동 모두)에는 자동 영점을 바로 돌리지 않는다. 전원을 껐다 켜고 팔을 영점 자세로 돌려 둔 뒤 팔마다 한 번 실행한다.
-실행 중 위치값이 한 주기에 크게 튀면 모터를 끄고 `[SAFETY ABORT]` 를 출력하며 멈춘다.
+| [openarm_hardware](src/openarm_hardware/README.md) | `enactic/openarm_ros2` 의 ros2_control 하드웨어 플러그인. 활성화 때 영점 자세로 천천히 이동, 중력보상 추가 |
+| openarm_sim | MuJoCo 시뮬레이션 |
+| openarm_bringup | 실물 실행 |
+| openarm_moveit | MoveIt 설정과 예제 |
+| openarm_safety | teleop·policy 명령의 안전 필터 |
+| openarm_mini | OpenArm mini 리더암 teleop |
+| openarm_lerobot | 한 팔 imitation learning — ROS 로 시연 기록, LeRobot 0.7.0 으로 ACT 학습, policy 추론 |
