@@ -1,4 +1,7 @@
-"""mini 서보 응답과 관절값을 확인하는 CLI. 관절을 움직이며 방향·영점을 눈으로 본다."""
+"""mini 서보 응답과 관절값을 확인하는 CLI. 관절을 움직이며 방향·영점을 눈으로 본다.
+
+보정값이 없으면 서보 응답과 tick 만 보여 준다. 각도는 calibrate 뒤에 나온다.
+"""
 
 import argparse
 import math
@@ -36,7 +39,9 @@ def ping_arm(arm, bus, ids):
     return missing
 
 
-def rows_for(arm, arm_cfg, ticks, cfg):
+def rows_for(arm, arm_cfg, ticks, cfg, calibrated):
+    if not calibrated:
+        return [f'{arm:5s} {label(i):8s} {ticks[i]:4d} tick' for i in range(ARM_DOF + 1)]
     joints, gripper = arm_sample(arm_cfg, ticks, cfg['ticks_per_rev'], cfg['gripper_travel'])
     rows = [f'{arm:5s} {label(i):8s} {ticks[i]:4d} tick  {math.degrees(joints[i]):+7.1f} deg'
             for i in range(ARM_DOF)]
@@ -44,7 +49,7 @@ def rows_for(arm, arm_cfg, ticks, cfg):
     return rows
 
 
-def live_view(entries, cfg):
+def live_view(entries, cfg, calibrated):
     print('\n관절을 하나씩 움직여 방향과 영점이 맞는지 보세요. 종료는 Ctrl+C.')
     printed = 0
     try:
@@ -52,7 +57,7 @@ def live_view(entries, cfg):
             rows = []
             for arm, arm_cfg, bus in entries:
                 ticks = bus.read_positions(arm_cfg['ids'])
-                rows += [f'{arm:5s} 읽기 실패'] if ticks is None else rows_for(arm, arm_cfg, ticks, cfg)
+                rows += [f'{arm:5s} 읽기 실패'] if ticks is None else rows_for(arm, arm_cfg, ticks, cfg, calibrated)
             if printed:
                 sys.stdout.write(f'\x1b[{printed}A')
             sys.stdout.write(''.join(f'\x1b[2K{row}\n' for row in rows))
@@ -66,10 +71,17 @@ def live_view(entries, cfg):
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     cfg = config_io.load()
+    arms = config_io.arms_or_exit(cfg, args.arm)
+    calibrated = True
+    try:
+        config_io.apply_calibration(cfg, arms)
+    except config_io.CalibrationMissing as error:
+        calibrated = False
+        print(f'{error}\n보정 전이라 tick 만 표시합니다.\n')
     entries = []
     failed = False
     try:
-        for arm in config_io.arms_or_exit(cfg, args.arm):
+        for arm in arms:
             arm_cfg = cfg['arms'][arm]
             print(f'{arm}: {arm_cfg["port"]}, 서보 id {arm_cfg["ids"]}')
             try:
@@ -84,7 +96,7 @@ def main(argv=None):
                 print(f'  {arm}: 서보 {missing} 가 응답하지 않습니다. 배선을 확인하고, id 는 register 로 배정하세요.')
                 failed = True
         if not failed:
-            live_view(entries, cfg)
+            live_view(entries, cfg, calibrated)
     finally:
         for _arm, _cfg, bus in entries:
             bus.close()

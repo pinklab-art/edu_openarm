@@ -1,4 +1,4 @@
-"""mini 의 영점 자세와 그리퍼 열림·닫힘을 읽어 mini.yaml 에 적는 대화형 CLI."""
+"""mini 의 영점 자세와 그리퍼 열림·닫힘을 읽어 보정값 파일에 적는 대화형 CLI."""
 
 import argparse
 import sys
@@ -39,14 +39,14 @@ def calibrate_arm(arm, arm_cfg, baudrate):
         bus.close()
     if open_ticks == closed_ticks:
         sys.exit(f'{arm} 그리퍼 열림·닫힘 tick 이 같습니다({open_ticks}). 그리퍼를 끝까지 움직였는지 확인하세요.')
-    arm_cfg['offset_ticks'] = offsets
-    arm_cfg['gripper_ticks'] = {'open': open_ticks, 'closed': closed_ticks}
+    gripper_ticks = {'open': open_ticks, 'closed': closed_ticks}
     print(f'  offset_ticks {offsets}, gripper open {open_ticks} / closed {closed_ticks}')
+    return offsets, gripper_ticks
 
 
 def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
     cfg = config_io.load()
     for arm in config_io.arms_or_exit(cfg, args.arm):
-        calibrate_arm(arm, cfg['arms'][arm], cfg['baudrate'])
-        print(f'  {arm} 값을 {config_io.save(cfg)} 에 저장했습니다.')
+        offsets, gripper_ticks = calibrate_arm(arm, cfg['arms'][arm], cfg['baudrate'])
+        print(f'  {arm} 값을 {config_io.save_calibration(arm, offsets, gripper_ticks)} 에 저장했습니다.')

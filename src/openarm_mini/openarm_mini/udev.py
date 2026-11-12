@@ -146,9 +146,6 @@ def main(argv=None):
     except subprocess.CalledProcessError as error:
         sys.exit(f'규칙 등록에 실패했습니다: {error}')
 
-    for arm in rules:
-        cfg['arms'][arm]['port'] = f'/dev/{SYMLINK_PREFIX}{arm}'
-    config_io.save(cfg)
     print('\n등록했습니다. 보드를 뽑았다 다시 꽂은 뒤 고정 이름을 확인하세요:')
     for arm in rules:
         print(f'  ls -l /dev/{SYMLINK_PREFIX}{arm}')

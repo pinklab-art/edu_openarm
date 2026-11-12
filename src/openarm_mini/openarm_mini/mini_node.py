@@ -1,7 +1,7 @@
 """OpenArm mini 리더암 자세를 읽어 안전 필터 입력으로 보내는 노드.
 
 출력   /safety_filter/command   sensor_msgs/JointState (팔마다 관절 7 + finger_joint1)
-리더 서보 tick 을 mini.yaml 의 offset·sign 으로 관절각으로 바꿀 뿐, 한계·속도 제한은 안전 필터가 맡는다.
+리더 서보 tick 을 보정값의 offset 과 mini.yaml 의 sign 으로 관절각으로 바꿀 뿐, 한계·속도 제한은 안전 필터가 맡는다.
 """
 
 import signal
@@ -28,6 +28,7 @@ class MiniNode(Node):
         unknown = [arm for arm in arms if arm not in self.cfg['arms']]
         if unknown:
             raise ValueError(f'mini.yaml 에 없는 팔: {unknown}')
+        config_io.apply_calibration(self.cfg, arms)   # 보정값이 없으면 포트를 열기 전에 멈춘다
 
         self.arms = []
         for arm in arms:
@@ -77,7 +78,7 @@ def main(args=None):
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     try:
         node = MiniNode()
-    except (RuntimeError, ValueError) as error:   # 포트를 못 열었거나 설정에 없는 팔
+    except (RuntimeError, ValueError) as error:   # 포트를 못 열었거나 설정에 없는 팔·보정값 없음
         print(error)
         rclpy.shutdown()
         return 1

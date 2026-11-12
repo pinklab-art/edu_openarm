@@ -1,5 +1,6 @@
-# OpenArm mini 리더암 설정.
-# arms.<arm>.port 는 `ros2 run openarm_mini udev`, offset_ticks·gripper_ticks 는 `ros2 run openarm_mini calibrate` 가 갱신한다.
+# OpenArm mini 리더암 설정. 모든 mini 에 같은 값이다.
+# port 는 `ros2 run openarm_mini udev` 가 만드는 고정 이름, mini 마다 다른 보정값은 `ros2 run openarm_mini calibrate` 가
+# ~/.config/openarm_mini/calibration.yaml 에 따로 쓴다.
 
 rate_hz: 50.0              # 리더암을 읽어 명령을 내는 주기 [Hz]
 baudrate: 1000000          # Feetech 버스 속도
@@ -12,11 +13,7 @@ arms:
     port: /dev/openarm_mini_left
     ids: [1, 2, 3, 4, 5, 7, 6, 8]          # OpenArm 관절 1~7·그리퍼에 대응하는 서보 id. mini 관절 6·7 은 OpenArm 관절 7·6 에 대응
     signs: [-1, 1, -1, -1, -1, -1, -1]     # 관절 1~7 의 리더 회전 방향 → 팔로워 관절 방향
-    offset_ticks: [2038, 2039, 2108, 2041, 2040, 2071, 2204, 2055]
-    gripper_ticks: {open: 2727, closed: 2047}
   right:
     port: /dev/openarm_mini_right
     ids: [1, 2, 3, 4, 5, 7, 6, 8]
     signs: [-1, -1, -1, -1, -1, -1, 1]
-    offset_ticks: [2021, 2080, 2018, 2087, 2133, 1977, 2033, 2099]
-    gripper_ticks: {open: 1438, closed: 2103}
