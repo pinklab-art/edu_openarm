@@ -10,7 +10,7 @@ safety_filter:
     gripper_range: [0.0, 0.044] # finger_joint1 범위 [m] (닫힘, 열림)
     gripper_alpha: 0.25         # 그리퍼 low-pass 계수 (1 이면 거르지 않음)
     gripper_deadband: 0.001     # 이보다 작게 움직이면 goal 을 새로 보내지 않음 [m]
-    gripper_period: 0.1         # goal 을 보내는 최소 간격 [s]
+    gripper_period: 0.02        # goal 을 보내는 최소 간격 [s]. 0.1 이면 그리퍼가 10 Hz 계단으로 끊겨 움직인다
     gripper_max_effort: 10.0    # GripperCommand max_effort, gripper_controller 의 max_effort 와 같은 값
 
     # 관절 1~7 의 [하한, 상한] [deg]. URDF 한계보다 좁은, 실기에서 쓰던 teleop 범위다.

@@ -100,7 +100,7 @@ class SafetyFilterNode(Node):
         self.declare_parameter('gripper_range', [0.0, 0.044])
         self.declare_parameter('gripper_alpha', 0.25)
         self.declare_parameter('gripper_deadband', 0.001)
-        self.declare_parameter('gripper_period', 0.1)
+        self.declare_parameter('gripper_period', 0.02)
         self.declare_parameter('gripper_max_effort', 10.0)
         arms = list(self.get_parameter('arms').value)
         for arm in arms:
@@ -115,7 +115,9 @@ class SafetyFilterNode(Node):
         self.gripper_range = tuple(p('gripper_range'))
         self.gripper_alpha = p('gripper_alpha')
         self.gripper_deadband = p('gripper_deadband')
-        self.gripper_period_ns = int(p('gripper_period') * 1e9)
+        # gripper_period 가 timer 주기의 배수면 콜백 지연 때문에 한 tick 씩 늦게 나가는 일이
+        # 생긴다. 반 tick 여유를 두어 goal 간격을 gripper_period 에 맞춘다.
+        self.gripper_period_ns = int((p('gripper_period') - self.period / 2) * 1e9)
         self.gripper_max_effort = p('gripper_max_effort')
 
         self.arms = [ArmFilter(self, arm) for arm in arms]
