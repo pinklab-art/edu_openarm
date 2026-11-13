@@ -4,6 +4,7 @@ arm: right                  # 기록·추론할 팔. right 는 can0, left 는 ca
 fps: 30                     # 기록·추론 주기 [Hz]. 카메라도 이 framerate 로 연다
 robot_type: openarm_v1      # 데이터셋 메타데이터에 남는 로봇 이름
 display: true               # 기록·추론 중 rerun 창에 카메라 영상과 관절값 표시
+play_sounds: true           # 기록 단계(에피소드 시작·리셋·다시 기록·끝)를 음성(spd-say)으로 알림
 
 # 카메라 이름 → 장치. 이름이 데이터셋의 observation.images.<이름> 이 된다.
 # 장치 번호는 `lerobot-find-cameras opencv` 가 찍은 사진으로 확인한다. 웹캠 하나가 /dev/video 를 두 개씩 잡으므로 사진이 나오는 번호를 쓴다.
@@ -13,9 +14,18 @@ cameras:
 image_width: 640
 image_height: 480
 
+# 카메라 영상 압축(AV1). LeRobot 기본값은 g 2 다. g 10 이면 화질은 거의 같고 용량은 약 1/3 이다.
+# 이미 있는 데이터셋은 만들 때의 값으로 이어 기록해야 하므로, 값을 바꾸면 --repo-id 로 새 데이터셋을 만든다.
+video:
+  g: 10                     # keyframe 간격 [frame]. 클수록 작지만 학습 때 frame 하나를 꺼내는 시간이 는다
+  crf: 30                   # 화질. 클수록 작고 흐리다
+
 dataset:
   repo_id: local/openarm_pick                       # 저장 위치 ~/.cache/huggingface/lerobot/<repo_id>
   task: pick up the cube and place it in the box    # 에피소드마다 남는 작업 설명
+  num_episodes: 50          # 한 번 실행에 기록할 에피소드 수
+  episode_time_s: 30        # 에피소드 하나의 최대 길이 [s]. 일찍 끝내려면 → 키
+  reset_time_s: 15          # 에피소드 사이에 물체를 되돌려 놓는 시간 [s]. 기록하지 않는다. 일찍 끝내려면 → 키
 
 policy:
   device: cuda              # GPU 가 없으면 cpu

@@ -6,7 +6,7 @@ import yaml
 
 from ament_index_python.packages import get_package_share_directory
 
-REQUIRED_KEYS = ('arm', 'fps', 'robot_type', 'display', 'cameras', 'image_width', 'image_height', 'dataset', 'policy')
+REQUIRED_KEYS = ('arm', 'fps', 'robot_type', 'display', 'play_sounds', 'cameras', 'image_width', 'image_height', 'video', 'dataset', 'policy')
 
 
 def default_path():

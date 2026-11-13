@@ -20,6 +20,7 @@ from sensor_msgs.msg import JointState
 from openarm_lerobot.features import pick, ros_joint_names
 
 COMMAND_TOPIC = '/safety_filter/command'
+TOPICS = {'state': '/joint_states', 'action': COMMAND_TOPIC}   # snapshot 키 → topic
 
 
 class RobotIO(Node):
@@ -30,7 +31,7 @@ class RobotIO(Node):
         self.latest = {}   # 이름 → (받은 시각 [s], 값)
         self.lock = threading.Lock()
 
-        self.create_subscription(JointState, '/joint_states', self._joints_callback('state'), 10)
+        self.create_subscription(JointState, TOPICS['state'], self._joints_callback('state'), 10)
         if record_action:
             self.create_subscription(JointState, COMMAND_TOPIC, self._joints_callback('action'), 10)
             self.command_pub = None
@@ -58,10 +59,10 @@ class RobotIO(Node):
         values = {}
         for key in keys:
             if key not in latest:
-                return None, f'{key} 를 아직 받지 못했습니다'
+                return None, f'아직 받지 못한 topic — {TOPICS[key]}'
             stamp, value = latest[key]
             if now - stamp > max_age:
-                return None, f'{key} 가 {now - stamp:.1f} s 동안 끊겼습니다'
+                return None, f'{now - stamp:.1f} s 동안 끊긴 topic — {TOPICS[key]}'
             values[key] = value
         return values, None
 
