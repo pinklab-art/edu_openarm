@@ -51,6 +51,9 @@ def main():
     stop = stop_flag()
     policy, preprocessor, postprocessor = load_policy(args.policy_path, device)
     print(f'policy {policy.config.type} 를 {device} 에 불러왔습니다')
+    if policy.config.type == 'act':   # chunk 설정은 ACT 의 config.json 에만 있다
+        print(f'chunk {policy.config.chunk_size} 중 {policy.config.n_action_steps} 사용, '
+              f'temporal ensembling {policy.config.temporal_ensemble_coeff}')
 
     cameras = Cameras(cfg)
     display = Display(cfg, 'openarm_policy') if cfg['display'] else None
